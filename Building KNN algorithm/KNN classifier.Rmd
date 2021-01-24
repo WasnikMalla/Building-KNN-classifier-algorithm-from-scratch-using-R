@@ -1,0 +1,265 @@
+---
+title: "Building KNN classifier"
+author: "Wasnik Malla"
+date: "24 January 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+**Initialising packages**
+
+```{r}
+#install.packages("reshape2")
+#install.packages("ggplot2")
+#install.packages("corrplot")
+#install.packages("Cairo")
+#install.packages("glmnet")
+
+library(glmnet)
+library(reshape2)
+library(ggplot2)
+library(corrplot)
+
+
+```
+
+**We are implementing a KNN classifier to predict the class of iris plants. The well-known iris dataset is used in this question. Detailed description of this data set can be found at https://archive.ics.uci.edu/ml/datasets/iris.**
+
+Specifically, we need to:
+
+1. Split the data set into a training and a test set with the ratio of 7:3
+
+2. Implement a KNN classifier.
+
+3. Investigate the impact of different K (from 1 to 6) values on the model performance (ACC) and the impact of different distance measurements (euclidean, manhattan, canberra, and minkowski) on the model performance (ACC). Visualize and discuss your findings.
+
+**1. Split the data set into a training and a test set with the ratio of 7:3** 
+
+```{r}
+#loading iris data set
+iris <- read.csv(url("http://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data"))
+```
+
+```{r}
+#checking dataframe structure
+data(iris) # loading to dataframe
+
+head(iris)
+```
+
+
+
+Now let us find out how our data is distributed / scattered among groups within different class labels. 
+
+
+```{r}
+
+## the followin plot illustrates petal measurments:
+
+ggplot(data=iris, aes(x=Petal.Length, y=Petal.Width, color=Species)) + 
+    geom_point() + geom_rug()+ theme_minimal() + ggtitle("Petal Measurements")
+
+
+# this plot illustrates sepal measurement
+ggplot(data=iris, aes(x=Sepal.Length, y=Sepal.Width, color=Species)) + 
+    geom_point() + geom_rug()+ theme_minimal() + ggtitle("Sepal Measurements")
+
+```
+
+
+
+
+From above plots what we can seen in petal meausrements, there are three distinct groups, where Setosa falls within first quadrant close to 2 and 0, as length and width increases, Versicolor and Virginica are clustered separately.
+
+Now, looking at Sepal measurements, Setosa are distinct than other two, whereas Versicolor and Virginica are mostly mixed.    
+
+In other words, what we can say is, petal measurements are best utilised for clusturing problem and KNN would be best applied for both clustering and classification problem. 
+
+**Normalisation**
+
+Now let us normalize iris data sets before splicing into training and test sets to 7:3 ratio. 
+
+
+```{r}
+# normalise function created as below - 
+
+norm <- function(x) {
+  
+  return ((x - min(x)) / (max(x) - min(x)))
+  
+}
+
+#applying normalization to data frame
+
+iris.norm <- as.data.frame(lapply(iris[, c(1,2,3,4)], norm))
+iris.norm <- cbind(iris.norm, iris[, 5]) # binding Species feature to normalised dataframe
+colnames(iris.norm)[5] <-  c("Species") # renaming column
+
+head(iris.norm) # checking
+
+```
+
+
+
+Now we are going to split training and test set from new normalized dataframe called iris.norm
+
+**Split**
+
+```{r}
+
+set.seed(123)
+
+train.index <- sample(1:nrow(iris.norm), 0.7 * nrow(iris.norm))
+
+#extracting training set leaving categorical index out of data set
+train.data <- iris.norm [train.index, -5]
+
+#head(train.data)
+#dim(train.data)
+
+# extracting labels only for training data set
+train.label <- iris.norm[train.index, 5]
+
+#head(train.label)
+
+# extracting test data set
+test.data <- iris.norm[-train.index, -5]
+
+#dim(test.data)
+
+# extracting label for test set to compare accuracy
+test.label <- iris.norm[-train.index, 5]
+
+#head(test.label)
+
+```
+
+**2. Implement a KNN classiﬁer**
+
+```{r}
+
+# define an auxiliary function that calculates the majority votes (or mode!)
+
+majority <- function(x) {
+   uniqx <- unique(x)
+   uniqx[which.max(tabulate(match(x, uniqx)))]
+}
+
+```
+
+**building KNN function**
+
+```{r}
+
+# KNN function (distance should be one of euclidean, manhattan, canberra, and minkowski)
+
+knn <- function(train.data, train.label, test.data, K, distance){
+    
+    ## count number of train samples
+    train.len <- nrow(train.data)
+    
+    ## count number of test samples
+    test.len <- nrow(test.data)
+    
+    ## calculate distances between samples
+    dist <- as.matrix(dist(rbind(test.data, train.data), method= distance))[1:test.len, (test.len+1):(test.len+train.len)]
+    
+    ## for each test sample...
+    for (i in 1:test.len){
+        ### ...find its K nearest neighbours from training sampels...
+        nn <- as.data.frame(sort(dist[i,], index.return = TRUE))[1:K,2]
+        
+        ###... and calculate the predicted labels according to the majority vote
+        test.label[i]<- (majority(train.label[nn]))
+    }
+    
+    ## return the class labels as output
+    return (test.label)
+}
+
+
+
+```
+
+
+**3.  Investigate the impact of diﬀerent K (from 1 to 6) values on the model performance (ACC) and the impact of diﬀerent distance measurements (euclidean, manhattan, canberra, and minkowski) on the model performance (ACC)**
+
+Lets build this functin to calculate each distanance from k = 1 to 6.
+
+```{r}
+
+# creating function to calculate accuracy
+accuracy <- function(x) {
+  round(sum(diag(x) / sum(rowSums(x))) * 100, 2)
+}
+
+
+# building function to see the impact of K between 1 to 6
+
+impact <- function(distance) {
+  
+  k <- c(1,2,3,4,5,6)
+  
+  accuracy.list <- c()
+  
+  for (i in k) {
+    
+    # calling function for prediction
+    pred <- knn(train.data, train.label, test.data, i, distance)
+  
+    # generating confusion matrix
+    confusion.matrix <- prop.table(table(pred, test.label))*100
+    
+    # calculating accuracy by calling function defined before
+    ACC <- accuracy(confusion.matrix)
+    
+    accuracy.list[i] <- ACC # appending accuracy for k = 1 to 6 
+    
+  }
+  
+  df <- as.data.frame(accuracy.list) # creating dataframe of list of accuracy
+  names(df) <- 'Accuracy'
+  #print(df)
+  
+  ggplot(df, aes(x=rownames(df), Accuracy)) + ggtitle(paste0("Accuracy for different values of K using distance =", distance)) + geom_bar(stat = 'identity', width= 0.5, fill= "Steelblue") + xlab("Value of K") + geom_text(aes(label=Accuracy), vjust= 1.6, color="white", size=3.5) + theme_minimal()
+  
+}
+```
+
+ 
+Now after a function is created to find the impact on prediction for different value of K, we will now call the function for each distace as asked, where distance is the argument for the function, as such -
+
+```{r}
+
+# calling function for each distance
+
+impact('euclidean') 
+impact('manhattan')
+impact('canberra')
+impact('minkowski')
+
+```
+
+
+
+As we can see from above plots, the accuracy of prediction for each distance measurement for the value of K from 1 to 6. 
+
+For euclidean distance, accuracy is similar upto k=5, which is at 95.56%, wehreas, k=6 yields 97.78%
+For manhattan distance, maximum accuracy obtained is 95.56% for k = 3,4,5 and 6.
+For canberra distance, accuracy increases as K increases, maximum accuracy at 95.56% for K = 5 and 6. 
+For Minkowski distnce, maximum accuracy is 97.78% for K = 6. 
+
+From the above trend, distance measurement for Euclidean adn Minkowski, we have same trend, 
+
+Thus we can select our best model as per the findings, whcis is one of two:
+
+1, Euclidean distnce with K=6
+
+2. Minkowsi distance with K = 6
+
